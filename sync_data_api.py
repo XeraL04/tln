@@ -1,10 +1,13 @@
+# WORKS
 import psycopg2
 import requests
 import datetime
 import logging
 import configparser
+import time #for sleep
 from id_mapping import id_mapping
 from api_helper import get_access_token
+
 
 # read the configuration from the config.ini
 config = configparser.ConfigParser()
@@ -72,13 +75,13 @@ def send_data_to_api(api_url, access_token, employee_id, datetime, timezone, not
         logging.info(f"Synchronized data for employee ID {employee_id} with payload: {data}")
         return response.json()
     except requests.exceptions.HTTPError as errh:
-        print(f"HTTP Error: {errh}")
+        print(f"HTTP Error when sending data to the API : {errh}")
     except requests.exceptions.ConnectionError as errc:
-        print(f"Error Connecting: {errc}")
+        print(f"Error Connecting when sending data to the API : {errc}")
     except requests.exceptions.Timeout as errt:
-        print(f"Timeout Error: {errt}")
+        print(f"Timeout Error when sending data to the API : {errt}")
     except requests.exceptions.RequestException as err:
-        print(f"Request Exception: {err}")
+        print(f"Request Exception when sending data to the API : {err}")
         # log error if synchronization fails
         logging.error(f"Error : Unable to send data to API - {err}")
     return None
@@ -93,6 +96,74 @@ def update_sync_status(connection, attendance_id):
         print(f"Error: Unable to update sync status - {e}")
     finally:
         cursor.close()
+
+# cheking if the data is available on the api 
+def check_sync_status(api_url, access_token, attendance_id):
+    headers = {
+        "Authorization": f"Bearer{access_token}",
+        "Content_Type":"application/json"
+    }
+
+    try:
+        response = requests.get(f"{api_url}/api/v1/attendance/{attendance_id}",headers=headers)
+        response.raise_for_status()
+
+        data = response.json()
+        if data.get("success") and data.get("data",{}).get("synced"):
+            print(f"Attendance ID {attendance_id} already synchronized on the API. Skipping")
+            return True
+        else:
+            print(f"Attendance ID {attendance_id} not synchronized on the API. Retrying sync.")
+            return False
+    except requests.exceptions.HTTPError as errh:
+        if errh.response.status_code == 404:
+            print(f"Attendance ID {attendance_id} not found on the API. Retrying sync.")
+            return False
+        else:
+            print (f"HTTP Error when checking if the data is synchronized: {errh}")
+    except requests.exceptions.ConnectionError as errc:
+        print (f"Error Connecting when checking if the data is synchronized: {errc}")
+    except requests.exceptions.Timeout as errt:
+        print (f"Timeout Error when checking if the data is synchronized: {errt}")
+    except requests.exceptions.RequestException as err:
+        print (f"Request Exception Error: {err}")
+    # If reach this point, there was an issue with the api request or the status check
+    print(f"Unable to check synchronization status for attendance ID {attendance_id}")
+    return False
+
+# checking if the data is sync after the sync process
+def check_sync_status_after_sync(api_url, access_token, attendance_id):
+    headers = {
+        "Authorization" : f"Bearer {access_token}",
+        "Content_Type" : "application/json"
+    }
+
+    try : 
+        response = requests.get(f"{api_url}/api/v1/attendance/{attendance_id}", headers=headers)
+        response.raise_for_status()
+
+        data = response.json()
+        if data.get("succes") and data.get("data",{}).get("synced"):
+            print(f"Attendance ID {attendance_id} synchronized successfully on the API.")
+            return True
+        else:
+            print(f"Failed to synchronize Attendance ID {attendance_id} on the API.")
+            return False
+    except requests.exceptions.HTTPError as errh:
+        if errh.response.status_code == 404:
+            print(f"Attendance ID {attendance_id} not found on the API. Retrying sync.")
+            return False
+        else:
+            print(f"HTTP Error when checking if the data is synchronized: {errh}")
+    except requests.exceptions.ConnectionError as errc:
+        print(f"Error Connecting when checking if the data is synchronized: {errc}")
+    except requests.exceptions.Timeout as errt:
+        print(f"Timeout Error when checking if the data is synchronized: {errt}")
+    except requests.exceptions.RequestException as err:
+        print(f"Request Exception Error: {err}")
+    # If reach this point, there was an issue with the api request or the status check
+    print(f"Unable to check synchronization status for attendance ID {attendance_id}")
+    return False
 
 def main():
     # Get access token
@@ -113,7 +184,7 @@ def main():
 
     # Iterate through the attendance data
     for row in attendance_data:
-        attendance_id, employee_id, datetime, timezone, note, synced = row
+        attendance_id, employee_id, datetime, timezone, note, synced = row  # Adjust the order if needed
 
         # Skip if the data is already synchronized
         if synced:
@@ -128,6 +199,14 @@ def main():
             print(f"No mapping found for local DB ID: {employee_id}. Skipping.")
             continue
 
+        # Check if the data is already synchronized on the API
+        if check_sync_status(api_url, access_token, attendance_id):
+            # if synchronized Update the sync status on the local db and continue to the next eteration
+            update_sync_status(postgres_connection, attendance_id)
+            # check if the data is synchronized after the sync process
+            check_sync_status_after_sync(api_url, access_token, attendance_id)
+            continue
+
         # Send data to the Talenteo API
         api_response = send_data_to_api(api_url, access_token, talenteo_employee_id, datetime, timezone, note)
 
@@ -135,8 +214,18 @@ def main():
         if api_response and api_response.get("success"):
             update_sync_status(postgres_connection, attendance_id)
 
+            # Check if the data is synchronized after the sync process
+            check_sync_status_after_sync(api_url, access_token, attendance_id)
+        else:
+            # if syncing fails, retry after a delay 
+            print(f"Failed to sync data for attendace ID {attendance_id}, Retrying in 5 seconds...")
+            time.sleep(5) #sleep for 5 secs before retrying 
+
     # Close the database connection
     postgres_connection.close()
+
+    # Print a message after synchronizing all data
+    print("All attendance data synchronized successfully.")
 
 if __name__ == "__main__":
     main()
