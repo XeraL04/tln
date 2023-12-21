@@ -1,5 +1,3 @@
-# WORKS
-
 import psycopg2
 from zk import ZK
 import configparser

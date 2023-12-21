@@ -1,38 +1,31 @@
-# WORKS
 import psycopg2
 import requests
 import datetime
 import logging
+import configparser
+from id_mapping import id_mapping
+from api_helper import get_access_token
+
+# read the configuration from the config.ini
+config = configparser.ConfigParser()
+config.read('config.ini')
 
 # Local database configuration
 db_config = {
-    "host": "localhost",
-    "database": "tlnteo",
-    "user": "postgres",
-    "password": "T6oKNV1kxA-146v",
-    "port": "5432",
+    "host": config.get('Postgres','host'),
+    "database": config.get('Postgres','database'),
+    "user": config.get('Postgres','user'),
+    "password": config.get('Postgres','password'),
+    "port": config.get('Postgres','port'),
 }
 
 # Talenteo API configuration
-api_url = "https://reporting.dev.talenteo.com"
-client_id = "spintechs"
-client_secret = "RXb141ioB1ry2vbTZvEB"
+api_url = config.get('TalenteoAPI','api_url')
+client_id = config.get('TalenteoAPI','client_id')
+client_secret = config.get('TalenteoAPI','client_secret')
 
 # Configure logging
 logging.basicConfig(filename='sync_data.log', level=logging.DEBUG)
-
-# Employee ID mapping
-id_mapping = {
-    1: 1000, 
-    2: 1001, 
-    3: 1002, 
-    4: 1003, 
-    5: 1004, 
-    6: 1005, 
-    7: 1006, 
-    8: 1007, 
-    9: 1008, 
-}
 
 def connect_to_database(config):
     try:
@@ -42,29 +35,6 @@ def connect_to_database(config):
     except Exception as e:
         print(f"Error: Unable to connect to the database - {e}")
         return None
-
-def get_access_token(api_url, client_id, client_secret):
-    token_url = f"{api_url}/oauth/issueToken"
-
-    payload = {
-        "grant_type": "client_credentials",
-        "client_id": client_id,
-        "client_secret": client_secret,
-    }
-
-    try:
-        response = requests.post(token_url, data=payload)
-        response.raise_for_status()
-        return response.json().get("access_token")
-    except requests.exceptions.HTTPError as errh:
-        print(f"HTTP Error: {errh}")
-    except requests.exceptions.ConnectionError as errc:
-        print(f"Error Connecting: {errc}")
-    except requests.exceptions.Timeout as errt:
-        print(f"Timeout Error: {errt}")
-    except requests.exceptions.RequestException as err:
-        print(f"Request Exception: {err}")
-    return None
 
 def fetch_attendance_data(connection):
     try:
@@ -143,7 +113,7 @@ def main():
 
     # Iterate through the attendance data
     for row in attendance_data:
-        attendance_id, employee_id, datetime, timezone, note, synced = row  # Adjust the order if needed
+        attendance_id, employee_id, datetime, timezone, note, synced = row
 
         # Skip if the data is already synchronized
         if synced:
